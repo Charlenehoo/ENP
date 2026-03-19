@@ -36,8 +36,6 @@ TOOL.Name = "Wall Inspector"
 
 -- 初始化工具实体时创建存储表
 function TOOL:Initialize()
-    self:SetNWString("VictimClass", "None")
-    self:SetNWString("WallClasses", "[]")
     self.Victim = nil
     self.WallClasses = {} -- 存储墙体类名的集合（去重）
 end
@@ -52,10 +50,9 @@ function TOOL:LeftClick(trace)
     local ent = trace.Entity
     if IsValid(ent) and ent:IsNPC() then
         self.Victim = ent
-        self:SetNWString("VictimClass", ent:GetClass())
-        ply:PrintMessage(HUD_PRINTTALK, "[Wall Inspector] 受害者已设置为: " .. ent:GetClass())
+        print("[Wall Inspector] 受害者已设置为: " .. ent:GetClass())
     else
-        ply:PrintMessage(HUD_PRINTTALK, "[Wall Inspector] 请击中一个NPC来设置受害者")
+        print("[Wall Inspector] 请击中一个NPC来设置受害者")
     end
     return true
 end
@@ -67,23 +64,24 @@ function TOOL:RightClick(trace)
         return false
     end
 
+    -- 确保 WallClasses 已初始化
+    self.WallClasses = self.WallClasses or {}
+
     local ent = trace.Entity
     if IsValid(ent) then
         local class = ent:GetClass()
         -- 去重添加
         if not table.HasValue(self.WallClasses, class) then
             table.insert(self.WallClasses, class)
-            -- 更新网络字符串用于显示（可选）
-            self:SetNWString("WallClasses", table.concat(self.WallClasses, ", "))
-            ply:PrintMessage(HUD_PRINTTALK, "[Wall Inspector] 墙体类名已添加: " .. class)
+            print("[Wall Inspector] 墙体类名已添加: " .. class)
         else
-            ply:PrintMessage(HUD_PRINTTALK, "[Wall Inspector] 类名已存在: " .. class)
+            print("[Wall Inspector] 类名已存在: " .. class)
         end
-        -- 打印当前列表
-        ply:PrintMessage(HUD_PRINTTALK,
-            "[Wall Inspector] 当前墙体类名列表: " .. table.concat(self.WallClasses, ", "))
+        -- 打印当前列表（安全处理）
+        local wallStr = (#self.WallClasses > 0) and table.concat(self.WallClasses, ", ") or "空"
+        print("[Wall Inspector] 当前墙体类名列表: " .. wallStr)
     else
-        ply:PrintMessage(HUD_PRINTTALK, "[Wall Inspector] 未击中有效实体")
+        print("[Wall Inspector] 未击中有效实体")
     end
     return true
 end
@@ -95,9 +93,12 @@ function TOOL:Reload(trace)
         return
     end
 
+    -- 确保 WallClasses 已初始化
+    self.WallClasses = self.WallClasses or {}
+
     -- 检查受害者是否有效
     if not IsValid(self.Victim) then
-        ply:PrintMessage(HUD_PRINTTALK, "[Wall Inspector] 错误：受害者无效，请先用左键设置一个NPC")
+        print("[Wall Inspector] 错误：受害者无效，请先用左键设置一个NPC")
         return
     end
 
@@ -124,37 +125,38 @@ function TOOL:Reload(trace)
         end
     end
 
-    -- 打印结果
-    ply:PrintMessage(HUD_PRINTTALK, "========== 墙体检测结果 ==========")
-    ply:PrintMessage(HUD_PRINTTALK, string.format("攻击者位置: %s", tostring(attackerPos)))
-    ply:PrintMessage(HUD_PRINTTALK, string.format("受害者位置: %s", tostring(victimPos)))
-    ply:PrintMessage(HUD_PRINTTALK, string.format("墙体类名列表: %s", table.concat(self.WallClasses, ", ")))
+    -- 安全构造墙体类名字符串
+    local wallClassesStr = (#self.WallClasses > 0) and table.concat(self.WallClasses, ", ") or "无"
 
-    ply:PrintMessage(HUD_PRINTTALK, "--- 墙体（含世界墙） ---")
+    -- 打印结果
+    print("========== 墙体检测结果 ==========")
+    print(string.format("攻击者位置: %s", tostring(attackerPos)))
+    print(string.format("受害者位置: %s", tostring(victimPos)))
+    print(string.format("墙体类名列表: %s", wallClassesStr))
+
+    print("--- 墙体（含世界墙） ---")
     if #finalWalls == 0 then
-        ply:PrintMessage(HUD_PRINTTALK, "  无")
+        print("  无")
     else
         for i, info in ipairs(finalWalls) do
             local matName = GetMaterialName(info.matType)
             local thicknessStr = info.thickness == math.huge and "无限" or string.format("%.2f", info.thickness)
-            ply:PrintMessage(HUD_PRINTTALK,
-                string.format("  %d. 类名: %s | 厚度: %s | 材质: %s | 入射角: %.1f°", i, info.className,
-                    thicknessStr, matName, info.incidentAngle))
+            print(string.format("  %d. 类名: %s | 厚度: %s | 材质: %s | 入射角: %.1f°", i, info.className,
+                thicknessStr, matName, info.incidentAngle))
         end
     end
 
-    ply:PrintMessage(HUD_PRINTTALK, "--- 其他穿透实体 ---")
+    print("--- 其他穿透实体 ---")
     if #filteredOthers == 0 then
-        ply:PrintMessage(HUD_PRINTTALK, "  无")
+        print("  无")
     else
         for i, info in ipairs(filteredOthers) do
             local matName = GetMaterialName(info.matType)
-            ply:PrintMessage(HUD_PRINTTALK,
-                string.format("  %d. 类名: %s | 厚度: %.2f | 材质: %s | 入射角: %.1f°", i, info.className,
-                    info.thickness, matName, info.incidentAngle))
+            print(string.format("  %d. 类名: %s | 厚度: %.2f | 材质: %s | 入射角: %.1f°", i, info.className,
+                info.thickness, matName, info.incidentAngle))
         end
     end
-    ply:PrintMessage(HUD_PRINTTALK, "====================================")
+    print("====================================")
 end
 
 -- Think 函数（可为空）
