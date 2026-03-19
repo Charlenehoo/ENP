@@ -1,4 +1,9 @@
--- ==================== 工具函数（移至外部） ====================
+-- ==================== 模块级常量 ====================
+local PENETRATION_EPSILON = 0.5 --- 偏移量（单位），用于进入/退出实体内部，避免表面判定歧义
+local WORLD_STEP_SIZE = 1.0 --- 世界墙步进测量的步长（单位），平衡精度与性能
+
+-- ==================== 工具函数 ====================
+
 --- 判断点是否在世界固体内部（排除所有实体）
 --- @param point Vector 要检测的点
 --- @return boolean
@@ -98,18 +103,37 @@ end
 
 -- ==================== 主函数 ====================
 
+--- 获取从攻击者到受害者方向上的所有墙体信息，沿途依次检测并收集。
+--- 世界始终被视为墙体；其他实体根据 wallClassName 参数分类为墙体或非墙体。
+---
+--- @param attacker {Entity} 攻击者实体，用于过滤，避免自身被计入墙体
+--- @param victim {Entity} 目标实体，用于过滤，避免自身被计入墙体
+--- @param attackerPos {Vector} 攻击起始位置
+--- @param victimPos {Vector} 目标位置
+--- @param wallClassName {string?} 被视为墙体的实体类名；若为 nil，则所有实体均不作为墙体（世界仍作为墙体）
+---
+--- @return { table } walls: 墙体信息列表，每项包含：
+---   @field className {string} 类名（世界墙为 "world"）
+---   @field thickness {number} 沿方向的厚度（浮点数）
+---   @field matType {number} ARC9材质枚举，若无则为0
+---   @field incidentAngle {number} 入射角，单位度，0=掠射，90=垂直
+---
+--- @return { table } others: 非墙体实体信息列表，每项结构与 walls 完全相同：
+---   @field className {string} 实体的类名
+---   @field thickness {number} 沿方向的厚度（浮点数）
+---   @field matType {number} ARC9材质枚举，若无则为0
+---   @field incidentAngle {number} 入射角，单位度，0=掠射，90=垂直
+---
+--- @note 两个返回值结构对偶，walls 记录被判定为墙的实体（包括世界），others 记录其余穿透的实体。
+--- @note attacker 与 victim 均为实体，用于射线过滤，防止将自身或目标计入墙体。
 function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClassName)
     local walls = {}
     local others = {}
-    local epsilon = 0.5 -- 偏移量，用于进入/退出实体内部
-    local stepSize = 1.0 -- 世界墙步进测量的步长
-
     local currentPos = attackerPos
     local dir = (victimPos - attackerPos):GetNormalized()
     local totalDist = attackerPos:Distance(victimPos)
     local remainingDist = totalDist
     local maxIter = 100
-
     local filterEnts = {attacker, victim}
 
     while remainingDist > 0 and maxIter > 0 do
@@ -134,9 +158,10 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
         local thickness, exitPos, matType
 
         if isWorld then
-            thickness, exitPos, matType = MeasureWorldThickness(tr.HitPos, dir, remainingDist, epsilon, stepSize)
+            thickness, exitPos, matType = MeasureWorldThickness(tr.HitPos, dir, remainingDist, PENETRATION_EPSILON,
+                WORLD_STEP_SIZE)
         else
-            thickness, exitPos, matType = MeasureEntityThickness(tr, dir, epsilon)
+            thickness, exitPos, matType = MeasureEntityThickness(tr, dir, PENETRATION_EPSILON)
         end
 
         matType = matType or tr.MatType or 0
@@ -158,10 +183,10 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
             end
         end
 
-        currentPos = exitPos + dir * epsilon
+        currentPos = exitPos + dir * PENETRATION_EPSILON
         remainingDist = victimPos:Distance(currentPos)
 
-        if remainingDist <= epsilon then
+        if remainingDist <= PENETRATION_EPSILON then
             break
         end
     end
