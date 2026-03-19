@@ -2,6 +2,7 @@
 local PENETRATION_EPSILON = 0.5 --- 偏移量（单位），用于进入/退出实体内部，避免表面判定歧义
 local WORLD_STEP_SIZE = 1.0 --- 世界墙步进测量的步长（单位），平衡精度与性能
 local MAX_TRACE_DIST = 10000 --- 实体测量第二次射线的最大距离（远大于任何可能穿透距离）
+local MAX_PENETRATION_ITERATIONS = 100 --- 主循环最大迭代次数，防止无限穿透（安全保护）
 
 -- ==================== 工具函数 ====================
 
@@ -9,7 +10,7 @@ local MAX_TRACE_DIST = 10000 --- 实体测量第二次射线的最大距离（�
 --- @param point Vector 要检测的点
 --- @return boolean
 local function IsPointInWorld(point)
-    local tr = util.TraceLine({
+    local trace = util.TraceLine({
         start = point,
         endpos = point + Vector(1, 0, 0), -- 任意方向极小位移
         mask = MASK_SOLID,
@@ -17,7 +18,7 @@ local function IsPointInWorld(point)
             return false
         end -- 排除所有实体，只检测世界
     })
-    return tr.StartSolid
+    return trace.StartSolid
 end
 
 --- 计算入射角（度），0=掠射，90=垂直
@@ -51,14 +52,14 @@ local function MeasureWorldThickness(params)
     local inside = hitPos + dir * PENETRATION_EPSILON
     local thickness = 0
     local current = inside
-    local maxIter = maxDist / WORLD_STEP_SIZE + 100
+    local stepIter = maxDist / WORLD_STEP_SIZE + 100 -- 步进次数上限（安全裕量）
 
-    while thickness < maxDist and maxIter > 0 do
-        maxIter = maxIter - 1
+    while thickness < maxDist and stepIter > 0 do
+        stepIter = stepIter - 1
         if not IsPointInWorld(current) then
             -- 已穿出，从上一个内部点精确找到出口
             local prev = current - dir * WORLD_STEP_SIZE
-            local tr = util.TraceLine({
+            local exitTrace = util.TraceLine({
                 start = prev,
                 endpos = current,
                 mask = MASK_SOLID,
@@ -66,9 +67,9 @@ local function MeasureWorldThickness(params)
                     return false
                 end
             })
-            if tr.Hit and tr.Entity:IsWorld() then
-                thickness = hitPos:Distance(tr.HitPos)
-                return thickness, tr.HitPos, tr.MatType or firstMatType or 0
+            if exitTrace.Hit and exitTrace.Entity:IsWorld() then
+                thickness = hitPos:Distance(exitTrace.HitPos)
+                return thickness, exitTrace.HitPos, exitTrace.MatType or firstMatType or 0
             else
                 thickness = thickness - WORLD_STEP_SIZE + WORLD_STEP_SIZE * 0.5
                 return thickness, prev + dir * WORLD_STEP_SIZE * 0.5, firstMatType or 0
@@ -99,7 +100,7 @@ local function MeasureEntityThickness(params)
     local firstMatType = params.firstMatType
 
     local inside = hitPos + dir * PENETRATION_EPSILON
-    local tr2 = util.TraceLine({
+    local exitTrace = util.TraceLine({
         start = inside,
         endpos = inside + dir * maxDist,
         mask = MASK_SHOT,
@@ -107,10 +108,10 @@ local function MeasureEntityThickness(params)
             return e == entity
         end
     })
-    if tr2.Hit and tr2.Entity == entity then
-        local exitPos = tr2.HitPos
+    if exitTrace.Hit and exitTrace.Entity == entity then
+        local exitPos = exitTrace.HitPos
         local thickness = hitPos:Distance(exitPos)
-        return thickness, exitPos, tr2.MatType or firstMatType or 0
+        return thickness, exitPos, exitTrace.MatType or firstMatType or 0
     else
         -- 未能正常测出厚度（可能实体过薄或射线超出），回退到入口点外侧并返回0厚度
         return 0, hitPos + dir * PENETRATION_EPSILON, firstMatType or 0
@@ -149,34 +150,34 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
     local dir = (victimPos - attackerPos):GetNormalized()
     local totalDist = attackerPos:Distance(victimPos)
     local remainingDist = totalDist
-    local maxIter = 100
+    local iter = 0
     local filterEnts = {attacker, victim}
 
-    while remainingDist > 0 and maxIter > 0 do
-        maxIter = maxIter - 1
+    while remainingDist > 0 and iter < MAX_PENETRATION_ITERATIONS do
+        iter = iter + 1
 
-        local tr = util.TraceLine({
+        local trace = util.TraceLine({
             start = currentPos,
             endpos = victimPos,
             mask = MASK_SHOT,
             filter = filterEnts
         })
 
-        if not tr.Hit then
+        if not trace.Hit then
             break
         end
 
-        local hitEnt = tr.Entity
+        local hitEnt = trace.Entity
         local isWorld = hitEnt:IsWorld()
         local className = isWorld and "world" or hitEnt:GetClass()
-        local incidentAngle = GetIncidentAngle(tr.HitNormal, dir)
+        local incidentAngle = GetIncidentAngle(trace.HitNormal, dir)
 
         -- 构造统一的测量参数表
         local measureParams = {
-            hitPos = tr.HitPos,
+            hitPos = trace.HitPos,
             dir = dir,
             maxDist = remainingDist,
-            firstMatType = tr.MatType
+            firstMatType = trace.MatType
         }
         if not isWorld then
             measureParams.entity = hitEnt
@@ -189,7 +190,7 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
             thickness, exitPos, matType = MeasureEntityThickness(measureParams)
         end
 
-        matType = matType or tr.MatType or 0
+        matType = matType or trace.MatType or 0
 
         local info = {
             className = className,
