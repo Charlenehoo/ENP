@@ -14,9 +14,8 @@ local function IsPointInWorld(point)
         start = point,
         endpos = point + Vector(1, 0, 0), -- 任意方向极小位移
         mask = MASK_SOLID,
-        filter = function(ent)
-            return false
-        end -- 排除所有实体，只检测世界
+        -- 移除 filter，改用 collisiongroup 只与世界碰撞
+        collisiongroup = COLLISION_GROUP_DEBRIS
     })
     return trace.StartSolid
 end
@@ -52,7 +51,7 @@ local function MeasureWorldThickness(params)
     local inside = hitPos + dir * PENETRATION_EPSILON
     local thickness = 0
     local current = inside
-    local stepIter = maxDist / WORLD_STEP_SIZE + 100 -- 步进次数上限（安全裕量）
+    local stepIter = maxDist / WORLD_STEP_SIZE + 100
 
     while thickness < maxDist and stepIter > 0 do
         stepIter = stepIter - 1
@@ -63,9 +62,8 @@ local function MeasureWorldThickness(params)
                 start = prev,
                 endpos = current,
                 mask = MASK_SOLID,
-                filter = function(ent)
-                    return false
-                end
+                -- 移除 filter，改用 collisiongroup 只与世界碰撞
+                collisiongroup = COLLISION_GROUP_DEBRIS
             })
             if exitTrace.Hit and exitTrace.Entity:IsWorld() then
                 thickness = hitPos:Distance(exitTrace.HitPos)
@@ -104,9 +102,8 @@ local function MeasureEntityThickness(params)
         start = inside,
         endpos = inside + dir * maxDist,
         mask = MASK_SHOT,
-        filter = function(e)
-            return e == entity
-        end
+        filter = {entity}, -- 改为实体列表
+        whitelist = true -- 设置为白名单，只追踪列表中的实体
     })
     if exitTrace.Hit and exitTrace.Entity == entity then
         local exitPos = exitTrace.HitPos
