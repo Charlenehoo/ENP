@@ -1,6 +1,7 @@
 -- ==================== 模块级常量 ====================
 local PENETRATION_EPSILON = 0.5 --- 偏移量（单位），用于进入/退出实体内部，避免表面判定歧义
 local WORLD_STEP_SIZE = 1.0 --- 世界墙步进测量的步长（单位），平衡精度与性能
+local MAX_TRACE_DIST = 10000 --- 实体测量第二次射线的最大距离（远大于任何可能穿透距离）
 
 -- ==================== 工具函数 ====================
 
@@ -30,26 +31,29 @@ local function GetIncidentAngle(hitNormal, shotDir)
     return 90 - math.deg(angleRad)
 end
 
+-- ==================== 策略式厚度测量函数（统一签名） ====================
+
 --- 测量世界墙的厚度（步进法）
+--- 参数符合统一策略签名，entity 参数被忽略（传 nil 即可）
 --- @param hitPos Vector 入口点（表面击中点）
 --- @param dir Vector 方向（从攻击者到目标）
---- @param maxDist number 最大搜索距离（防止无限循环）
---- @param epsilon number 偏移量（用于判断是否进入/退出）
---- @param stepSize number 步进步长
+--- @param entity Entity? 忽略，只为保持签名一致
+--- @param maxDist number 最大搜索距离（不能超过到目标的剩余距离）
+--- @param firstMatType number? 后备材质（入口材质，当无法获取出口材质时使用）
 --- @return number thickness 厚度
 --- @return Vector exitPos 出口点
---- @return number matType 材质类型（0若无法获取）
-local function MeasureWorldThickness(hitPos, dir, maxDist, epsilon, stepSize)
-    local inside = hitPos + dir * epsilon
+--- @return number matType 材质类型（若无法获取则使用 firstMatType 或 0）
+local function MeasureWorldThickness(hitPos, dir, entity, maxDist, firstMatType)
+    local inside = hitPos + dir * PENETRATION_EPSILON
     local thickness = 0
     local current = inside
-    local maxIter = maxDist / stepSize + 100
+    local maxIter = maxDist / WORLD_STEP_SIZE + 100
 
     while thickness < maxDist and maxIter > 0 do
         maxIter = maxIter - 1
         if not IsPointInWorld(current) then
             -- 已穿出，从上一个内部点精确找到出口
-            local prev = current - dir * stepSize
+            local prev = current - dir * WORLD_STEP_SIZE
             local tr = util.TraceLine({
                 start = prev,
                 endpos = current,
@@ -60,44 +64,45 @@ local function MeasureWorldThickness(hitPos, dir, maxDist, epsilon, stepSize)
             })
             if tr.Hit and tr.Entity:IsWorld() then
                 thickness = hitPos:Distance(tr.HitPos)
-                return thickness, tr.HitPos, tr.MatType
+                return thickness, tr.HitPos, tr.MatType or firstMatType or 0
             else
-                thickness = thickness - stepSize + stepSize * 0.5
-                return thickness, prev + dir * stepSize * 0.5, 0
+                thickness = thickness - WORLD_STEP_SIZE + WORLD_STEP_SIZE * 0.5
+                return thickness, prev + dir * WORLD_STEP_SIZE * 0.5, firstMatType or 0
             end
         end
-        thickness = thickness + stepSize
-        current = current + dir * stepSize
+        thickness = thickness + WORLD_STEP_SIZE
+        current = current + dir * WORLD_STEP_SIZE
     end
-    return thickness, current, 0
+    -- 超过最大距离仍未穿出，返回当前厚度和终点
+    return thickness, current, firstMatType or 0
 end
 
 --- 测量实体墙（或任何实体）的厚度（两次射线法）
---- @param tr table 第一次击中的Trace结果（必须包含.HitPos, .Entity, .MatType）
+--- @param hitPos Vector 入口点（表面击中点）
 --- @param dir Vector 方向（从攻击者到目标）
---- @param epsilon number 偏移量（用于进入实体内部）
+--- @param entity Entity 实体对象（用于第二次射线过滤）
+--- @param maxDist number 第二次射线的最大距离（通常为剩余距离或足够大的常数）
+--- @param firstMatType number? 后备材质（入口材质，当第二次射线无法获取材质时使用）
 --- @return number thickness 厚度
 --- @return Vector exitPos 出口点
---- @return number matType 材质类型（通常使用tr2的材质，若失败则用tr的）
-local function MeasureEntityThickness(tr, dir, epsilon)
-    local hit1 = tr.HitPos
-    local ent = tr.Entity
-    local inside = hit1 + dir * epsilon
+--- @return number matType 材质类型（优先使用出口材质，否则使用 firstMatType 或 0）
+local function MeasureEntityThickness(hitPos, dir, entity, maxDist, firstMatType)
+    local inside = hitPos + dir * PENETRATION_EPSILON
     local tr2 = util.TraceLine({
         start = inside,
-        endpos = inside + dir * 10000,
+        endpos = inside + dir * maxDist,
         mask = MASK_SHOT,
         filter = function(e)
-            return e == ent
+            return e == entity
         end
     })
-    if tr2.Hit and tr2.Entity == ent then
+    if tr2.Hit and tr2.Entity == entity then
         local exitPos = tr2.HitPos
-        local thickness = hit1:Distance(exitPos)
-        return thickness, exitPos, tr2.MatType
+        local thickness = hitPos:Distance(exitPos)
+        return thickness, exitPos, tr2.MatType or firstMatType or 0
     else
-        -- 未能正常测出厚度（可能实体过薄），回退到入口点外侧并返回0厚度
-        return 0, hit1 + dir * epsilon, tr.MatType
+        -- 未能正常测出厚度（可能实体过薄或射线超出），回退到入口点外侧并返回0厚度
+        return 0, hitPos + dir * PENETRATION_EPSILON, firstMatType or 0
     end
 end
 
@@ -158,10 +163,12 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
         local thickness, exitPos, matType
 
         if isWorld then
-            thickness, exitPos, matType = MeasureWorldThickness(tr.HitPos, dir, remainingDist, PENETRATION_EPSILON,
-                WORLD_STEP_SIZE)
+            -- 世界墙测量：使用统一签名的世界测量函数
+            thickness, exitPos, matType = MeasureWorldThickness(tr.HitPos, dir, nil, remainingDist, tr.MatType)
         else
-            thickness, exitPos, matType = MeasureEntityThickness(tr, dir, PENETRATION_EPSILON)
+            -- 实体测量：使用统一签名的实体测量函数
+            -- 最大距离取 remainingDist（但实体测量内部可能用到 MAX_TRACE_DIST，此处为了统一，使用 remainingDist 即可，也可用 math.min(remainingDist, MAX_TRACE_DIST)）
+            thickness, exitPos, matType = MeasureEntityThickness(tr.HitPos, dir, hitEnt, remainingDist, tr.MatType)
         end
 
         matType = matType or tr.MatType or 0
