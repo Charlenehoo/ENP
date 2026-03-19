@@ -158,15 +158,14 @@ local function MeasureEntityThickness(params)
 end
 
 -- ==================== 主函数 ====================
-
 --- 获取从攻击者到受害者方向上的所有墙体信息，沿途依次检测并收集。
---- 世界始终被视为墙体；其他实体根据 wallClassName 参数分类为墙体或非墙体。
+--- 世界始终被视为墙体；其他实体根据 wallClassNames 参数分类为墙体或非墙体。
 ---
 --- @param attacker {Entity} 攻击者实体，用于过滤，避免自身被计入墙体
 --- @param victim {Entity} 目标实体，用于过滤，避免自身被计入墙体
 --- @param attackerPos {Vector} 攻击起始位置
 --- @param victimPos {Vector} 目标位置
---- @param wallClassName {string?} 被视为墙体的实体类名；若为 nil，则所有实体均不作为墙体（世界仍作为墙体）
+--- @param wallClassNames {table?} 被视为墙体的实体类名列表；若为 nil，则所有实体均不作为墙体（世界仍作为墙体）
 ---
 --- @return { table } walls: 墙体信息列表，每项包含：
 ---   @field className {string} 类名（世界墙为 "world"）
@@ -182,7 +181,7 @@ end
 ---
 --- @note 两个返回值结构对偶，walls 记录被判定为墙的实体（包括世界），others 记录其余穿透的实体。
 --- @note attacker 与 victim 均为实体，用于射线过滤，防止将自身或目标计入墙体。
-function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClassName)
+function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClassNames)
     local walls = {}
     local others = {}
     local currentPos = attackerPos
@@ -242,10 +241,20 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
             incidentAngle = incidentAngle
         }
 
+        -- 判断是否为墙体
         if isWorld then
             table.insert(walls, info)
         else
-            if wallClassName and hitEnt:GetClass() == wallClassName then
+            local isWall = false
+            if wallClassNames then
+                for _, cls in ipairs(wallClassNames) do
+                    if cls == className then
+                        isWall = true
+                        break
+                    end
+                end
+            end
+            if isWall then
                 table.insert(walls, info)
             else
                 table.insert(others, info)
@@ -267,3 +276,4 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
 
     return walls, others
 end
+
