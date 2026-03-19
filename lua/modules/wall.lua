@@ -1,3 +1,4 @@
+-- lua\modules\wall.lua
 -- ==================== 模块级常量 ====================
 local PENETRATION_EPSILON = 0.5 --- 偏移量（单位），用于进入/退出实体内部，避免表面判定歧义
 local WORLD_STEP_SIZE = 1.0 --- 世界墙步进测量的步长（单位），平衡精度与性能
