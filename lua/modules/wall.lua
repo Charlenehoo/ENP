@@ -31,19 +31,23 @@ local function GetIncidentAngle(hitNormal, shotDir)
     return 90 - math.deg(angleRad)
 end
 
--- ==================== 策略式厚度测量函数（统一签名） ====================
+-- ==================== 策略式厚度测量函数（接受参数表） ====================
 
 --- 测量世界墙的厚度（步进法）
---- 参数符合统一策略签名，entity 参数被忽略（传 nil 即可）
---- @param hitPos Vector 入口点（表面击中点）
---- @param dir Vector 方向（从攻击者到目标）
---- @param entity Entity? 忽略，只为保持签名一致
---- @param maxDist number 最大搜索距离（不能超过到目标的剩余距离）
---- @param firstMatType number? 后备材质（入口材质，当无法获取出口材质时使用）
+--- @param params table 参数表，包含以下字段：
+---   @field hitPos Vector 入口点
+---   @field dir Vector 方向
+---   @field maxDist number 最大搜索距离
+---   @field firstMatType number? 后备材质
 --- @return number thickness 厚度
 --- @return Vector exitPos 出口点
---- @return number matType 材质类型（若无法获取则使用 firstMatType 或 0）
-local function MeasureWorldThickness(hitPos, dir, entity, maxDist, firstMatType)
+--- @return number matType 材质类型
+local function MeasureWorldThickness(params)
+    local hitPos = params.hitPos
+    local dir = params.dir
+    local maxDist = params.maxDist
+    local firstMatType = params.firstMatType
+
     local inside = hitPos + dir * PENETRATION_EPSILON
     local thickness = 0
     local current = inside
@@ -78,15 +82,22 @@ local function MeasureWorldThickness(hitPos, dir, entity, maxDist, firstMatType)
 end
 
 --- 测量实体墙（或任何实体）的厚度（两次射线法）
---- @param hitPos Vector 入口点（表面击中点）
---- @param dir Vector 方向（从攻击者到目标）
---- @param entity Entity 实体对象（用于第二次射线过滤）
---- @param maxDist number 第二次射线的最大距离（通常为剩余距离或足够大的常数）
---- @param firstMatType number? 后备材质（入口材质，当第二次射线无法获取材质时使用）
+--- @param params table 参数表，包含以下字段：
+---   @field hitPos Vector 入口点
+---   @field dir Vector 方向
+---   @field entity Entity 实体对象
+---   @field maxDist number 第二次射线的最大距离
+---   @field firstMatType number? 后备材质
 --- @return number thickness 厚度
 --- @return Vector exitPos 出口点
---- @return number matType 材质类型（优先使用出口材质，否则使用 firstMatType 或 0）
-local function MeasureEntityThickness(hitPos, dir, entity, maxDist, firstMatType)
+--- @return number matType 材质类型
+local function MeasureEntityThickness(params)
+    local hitPos = params.hitPos
+    local dir = params.dir
+    local entity = params.entity
+    local maxDist = params.maxDist
+    local firstMatType = params.firstMatType
+
     local inside = hitPos + dir * PENETRATION_EPSILON
     local tr2 = util.TraceLine({
         start = inside,
@@ -160,15 +171,22 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
         local className = isWorld and "world" or hitEnt:GetClass()
         local incidentAngle = GetIncidentAngle(tr.HitNormal, dir)
 
-        local thickness, exitPos, matType
+        -- 构造统一的测量参数表
+        local measureParams = {
+            hitPos = tr.HitPos,
+            dir = dir,
+            maxDist = remainingDist,
+            firstMatType = tr.MatType
+        }
+        if not isWorld then
+            measureParams.entity = hitEnt
+        end
 
+        local thickness, exitPos, matType
         if isWorld then
-            -- 世界墙测量：使用统一签名的世界测量函数
-            thickness, exitPos, matType = MeasureWorldThickness(tr.HitPos, dir, nil, remainingDist, tr.MatType)
+            thickness, exitPos, matType = MeasureWorldThickness(measureParams)
         else
-            -- 实体测量：使用统一签名的实体测量函数
-            -- 最大距离取 remainingDist（但实体测量内部可能用到 MAX_TRACE_DIST，此处为了统一，使用 remainingDist 即可，也可用 math.min(remainingDist, MAX_TRACE_DIST)）
-            thickness, exitPos, matType = MeasureEntityThickness(tr.HitPos, dir, hitEnt, remainingDist, tr.MatType)
+            thickness, exitPos, matType = MeasureEntityThickness(measureParams)
         end
 
         matType = matType or tr.MatType or 0
