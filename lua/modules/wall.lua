@@ -171,12 +171,16 @@ end
 --- @return { table } walls: 墙体信息列表，每项包含：
 ---   @field className {string} 类名（世界墙为 "world"）
 ---   @field thickness {number} 沿方向的厚度（浮点数）
+---   @field hitPos {Vector} 入射点（表面击中点）
+---   @field exitPos {Vector} 出射点（穿出表面点）
 ---   @field matType {number} ARC9材质枚举，若无则为0
 ---   @field incidentAngle {number} 入射角，单位度，0=掠射，90=垂直
 ---
 --- @return { table } others: 非墙体实体信息列表，每项结构与 walls 完全相同：
 ---   @field className {string} 实体的类名
 ---   @field thickness {number} 沿方向的厚度（浮点数）
+---   @field hitPos {Vector} 入射点
+---   @field exitPos {Vector} 出射点
 ---   @field matType {number} ARC9材质枚举，若无则为0
 ---   @field incidentAngle {number} 入射角，单位度，0=掠射，90=垂直
 ---
@@ -238,6 +242,8 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
         local info = {
             className = className,
             thickness = thickness,
+            hitPos = trace.HitPos, -- 记录入射点
+            exitPos = exitPos, -- 记录出射点
             matType = matType,
             incidentAngle = incidentAngle
         }
@@ -277,4 +283,3 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
 
     return walls, others
 end
-
