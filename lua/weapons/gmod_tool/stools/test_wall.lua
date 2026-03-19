@@ -25,9 +25,19 @@ local MAT_NAMES = {
     [90] = "MAT_WARPSHIELD"
 }
 
--- 辅助函数：从 trace 或材质数值获取材质名称
+-- 辅助函数：从材质数值获取材质名称
 local function GetMaterialName(matType)
     return MAT_NAMES[matType] or string.format("未知 (%d)", matType)
+end
+
+-- 辅助函数：判断值是否在表中
+local function HasValue(tbl, val)
+    for _, v in ipairs(tbl) do
+        if v == val then
+            return true
+        end
+    end
+    return false
 end
 
 -- 工具枪定义
@@ -69,13 +79,13 @@ function TOOL:RightClick(trace)
 
     local ent = trace.Entity
     if IsValid(ent) then
-        local class = ent:GetClass()
+        local className = ent:GetClass()
         -- 去重添加
-        if not table.HasValue(self.WallClasses, class) then
-            table.insert(self.WallClasses, class)
-            print("[Wall Inspector] 墙体类名已添加: " .. class)
+        if not HasValue(self.WallClasses, className) then
+            table.insert(self.WallClasses, className)
+            print("[Wall Inspector] 墙体类名已添加: " .. className)
         else
-            print("[Wall Inspector] 类名已存在: " .. class)
+            print("[Wall Inspector] 类名已存在: " .. className)
         end
         -- 打印当前列表（安全处理）
         local wallStr = (#self.WallClasses > 0) and table.concat(self.WallClasses, ", ") or "空"
@@ -86,7 +96,7 @@ function TOOL:RightClick(trace)
     return true
 end
 
--- 换弹：执行墙体检测并打印结果
+-- 换弹：执行墙体检测并打印结果，同时绘制路径
 function TOOL:Reload(trace)
     local ply = self:GetOwner()
     if not IsValid(ply) then
@@ -118,7 +128,7 @@ function TOOL:Reload(trace)
     -- 遍历 others，如果类名在墙体列表中，则作为墙体加入
     local filteredOthers = {}
     for _, o in ipairs(others) do
-        if table.HasValue(self.WallClasses, o.className) then
+        if HasValue(self.WallClasses, o.className) then
             table.insert(finalWalls, o)
         else
             table.insert(filteredOthers, o)
@@ -157,8 +167,66 @@ function TOOL:Reload(trace)
         end
     end
     print("====================================")
+
+    -- 绘制路径（使用 debugoverlay.Line，持续 60 秒）
+    local lineDuration = 60
+
+    -- 合并所有段
+    local allSegments = {}
+    for _, info in ipairs(finalWalls) do
+        table.insert(allSegments, {
+            className = info.className,
+            hitPos = info.hitPos,
+            exitPos = info.exitPos,
+            isWorld = (info.className == "world")
+        })
+    end
+    for _, info in ipairs(filteredOthers) do
+        table.insert(allSegments, {
+            className = info.className,
+            hitPos = info.hitPos,
+            exitPos = info.exitPos,
+            isWorld = false
+        })
+    end
+
+    -- 按 hitPos 距离攻击者排序
+    table.sort(allSegments, function(a, b)
+        return a.hitPos:DistToSqr(attackerPos) < b.hitPos:DistToSqr(attackerPos)
+    end)
+
+    -- 定义颜色
+    local colorAir = Color(200, 200, 200, 255)
+    local colorWorld = Color(255, 0, 0, 255)
+    local colorWall = Color(0, 255, 0, 255)
+    local colorOther = Color(0, 0, 255, 255)
+
+    local prevPos = attackerPos
+    for _, seg in ipairs(allSegments) do
+        -- 空气段
+        if prevPos ~= seg.hitPos then
+            debugoverlay.Line(prevPos, seg.hitPos, lineDuration, colorAir, true)
+        end
+        -- 物体内部段
+        if seg.hitPos ~= seg.exitPos then
+            local color
+            if seg.isWorld then
+                color = colorWorld
+            elseif HasValue(self.WallClasses, seg.className) then
+                color = colorWall
+            else
+                color = colorOther
+            end
+            debugoverlay.Line(seg.hitPos, seg.exitPos, lineDuration, color, true)
+        end
+        prevPos = seg.exitPos
+    end
+    -- 最后一段空气
+    if prevPos ~= victimPos then
+        debugoverlay.Line(prevPos, victimPos, lineDuration, colorAir, true)
+    end
 end
 
--- Think 函数（可为空）
+-- Think 函数（留空，不再使用）
 function TOOL:Think()
 end
