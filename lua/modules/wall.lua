@@ -1,38 +1,155 @@
 -- lua\modules\wall.lua
--- ==================== 模块级常量 ====================
-local PENETRATION_EPSILON = 0.5 --- 偏移量（单位），用于进入/退出实体内部，避免表面判定歧义
-local WORLD_STEP_SIZE = 1.0 --- 世界墙步进测量的步长（单位），平衡精度与性能
-local WORLD_STEP_ITER_SAFETY_MARGIN = 100 --- 世界墙步进循环的安全裕量（应对浮点误差）
-local MAX_PENETRATION_ITERATIONS = 100 --- 主循环最大迭代次数，防止无限穿透（安全保护）
-local STEP_LENGTH = 2 --- 固定步长，由原 ARC9 步长公式在无限穿透力下计算得出（4 与 WORLD_STEP_SIZE*2 取小）
+local PENETRATION_EPSILON = 1.0
+local MAX_PENETRATION_ITERATIONS = 128
+local INITIAL_STEP = 2.0
+local BINARY_SEARCH_PRECISION = 2.0
 
--- ==================== ARC9 核心判定函数 ====================
+--- 根据 ARC9 规则计算实体的扩展 AABB（将原包围盒从中心向外扩展 25%）。
+--- @param ent Entity
+--- @return Vector, Vector
+local function GetExpandedAABB(ent)
+    local mins, maxs = ent:WorldSpaceAABB()
+    local wsc = ent:WorldSpaceCenter()
+    local expMins = mins + (mins - wsc) * 0.25
+    local expMaxs = maxs + (maxs - wsc) * 0.25
+    return expMins, expMaxs
+end
 
---- 判断子弹是否仍在当前实体（或世界）内部（ARC9 原版逻辑）
---- @param ptr TraceResult 当前步进的射线结果
---- @param ptrent Entity 当前穿透的实体（世界或具体实体）
---- @return boolean 仍在内部返回 true，已穿出返回 false
+--- 判断射线点是否仍在指定实体（或世界）内部，完全贴合 ARC9 的 IsPenetrating 逻辑。
+--- @param ptr TraceResult
+--- @param ptrent Entity
+--- @return boolean
 local function IsPenetrating(ptr, ptrent)
     if ptrent:IsWorld() then
-        -- 世界判定：起点在固体中 或 整条线段全在固体中
-        return ptr.StartSolid or ptr.AllSolid
+        return not ptr.StartSolid or ptr.AllSolid
     elseif IsValid(ptrent) then
-        -- 实体判定：HitPos 是否在扩展 25% 的 AABB 内
-        local mins, maxs = ptrent:WorldSpaceAABB()
-        local wsc = ptrent:WorldSpaceCenter()
-        -- 将包围盒从中心向外扩展 25%，补偿 hitbox 可能超出 AABB 的情况
-        mins = mins + (mins - wsc) * 0.25
-        maxs = maxs + (maxs - wsc) * 0.25
-        return ptr.HitPos:WithinAABox(mins, maxs)
+        local mins, maxs = GetExpandedAABB(ptrent)
+        local withinbounding = ptr.HitPos:WithinAABox(mins, maxs)
+        if withinbounding then
+            return true
+        end
     end
     return false
 end
 
--- ==================== 工具函数 ====================
+--- 通用厚度测量：指数步进 + 二分查找。
+--- 从内部点 startPos 沿 dir 方向追踪，直至穿出目标实体，返回厚度、出口点和材质。
+--- @param params table { startPos, dir, entity, maxDist, firstMatType }
+--- @return number, Vector, number
+local function MeasureThickness(params)
+    local startPos = params.startPos
+    local dir = params.dir
+    local target = params.entity
+    local maxDist = params.maxDist
+    local firstMatType = params.firstMatType or 0
 
---- 计算入射角（度），0=掠射，90=垂直
---- @param hitNormal Vector 击中点法线
---- @param shotDir Vector 射击方向（从枪口到击中点）
+    local function TraceSegment(from, to)
+        return util.TraceLine({
+            start = from,
+            endpos = to,
+            mask = MASK_SHOT
+        })
+    end
+
+    local currentPos = startPos
+    local lastInsidePos = currentPos
+    local lastInsideTrace = nil
+    local step = INITIAL_STEP
+    local traveled = 0
+    local foundExit = false
+    local left, right, leftTrace, rightTrace
+
+    while traveled < maxDist do
+        local nextPos = currentPos + dir * step
+        local trace = TraceSegment(currentPos, nextPos)
+        local inside = (trace.Entity == target) and IsPenetrating(trace, target)
+
+        if inside then
+            traveled = traveled + step
+            currentPos = nextPos
+            lastInsidePos = currentPos
+            lastInsideTrace = trace
+            step = step * 2
+        else
+            left = lastInsidePos
+            right = nextPos
+            leftTrace = lastInsideTrace
+            rightTrace = trace
+            foundExit = true
+            break
+        end
+    end
+
+    if not foundExit then
+        return traveled, currentPos, firstMatType
+    end
+
+    while right:Distance(left) >= BINARY_SEARCH_PRECISION do
+        local mid = left + (right - left) * 0.5
+        local midTrace = TraceSegment(left, mid)
+        local midInside = (midTrace.Entity == target) and IsPenetrating(midTrace, target)
+        if midInside then
+            left = mid
+            leftTrace = midTrace
+        else
+            right = mid
+            rightTrace = midTrace
+        end
+    end
+
+    local exitPos = right
+    local thickness = startPos:Distance(exitPos)
+    local matType = rightTrace.MatType or firstMatType
+    return thickness, exitPos, matType
+end
+
+--- 实体墙快速测量：基于扩展 AABB 直接射线求交，性能更优。
+--- 若起点不在扩展 AABB 内或求交失败，则自动回退到通用测量。
+--- @param params table { startPos, dir, entity, maxDist, firstMatType }
+--- @return number, Vector, number
+local function MeasureEntityThicknessFast(params)
+    local startPos = params.startPos
+    local dir = params.dir
+    local entity = params.entity
+    local firstMatType = params.firstMatType or 0
+
+    local expMins, expMaxs = GetExpandedAABB(entity)
+    if not startPos:WithinAABox(expMins, expMaxs) then
+        return MeasureThickness(params)
+    end
+
+    local function RayIntersectAABB(origin, dir, mins, maxs)
+        local t1 = (mins.x - origin.x) / dir.x
+        local t2 = (maxs.x - origin.x) / dir.x
+        local tmin = math.min(t1, t2)
+        local tmax = math.max(t1, t2)
+
+        local ty1 = (mins.y - origin.y) / dir.y
+        local ty2 = (maxs.y - origin.y) / dir.y
+        tmin = math.max(tmin, math.min(ty1, ty2))
+        tmax = math.min(tmax, math.max(ty1, ty2))
+
+        local tz1 = (mins.z - origin.z) / dir.z
+        local tz2 = (maxs.z - origin.z) / dir.z
+        tmin = math.max(tmin, math.min(tz1, tz2))
+        tmax = math.min(tmax, math.max(tz1, tz2))
+
+        return tmin, tmax
+    end
+
+    local tmin, tmax = RayIntersectAABB(startPos, dir, expMins, expMaxs)
+    if tmax > tmin and tmax > 0 then
+        local exitPos = startPos + dir * tmax
+        local thickness = tmax
+        return thickness, exitPos, firstMatType
+    else
+        return MeasureThickness(params)
+    end
+end
+
+--- 计算入射角（0° 掠射，90° 垂直）。
+--- @param hitNormal Vector
+--- @param shotDir Vector
 --- @return number
 local function GetIncidentAngle(hitNormal, shotDir)
     local dot = shotDir:Dot(hitNormal)
@@ -41,154 +158,15 @@ local function GetIncidentAngle(hitNormal, shotDir)
     return 90 - math.deg(angleRad)
 end
 
--- ==================== 策略式厚度测量函数（完全对齐 ARC9 行为） ====================
-
---- 测量世界墙的厚度（模拟 ARC9 无限穿透力子弹）
---- @param params table 参数表，包含以下字段：
----   @field hitPos Vector 入口点
----   @field dir Vector 方向
----   @field maxDist number 最大搜索距离
----   @field firstMatType number? 后备材质
---- @return number thickness 厚度
---- @return Vector exitPos 出口点
---- @return number matType 材质类型
-local function MeasureWorldThickness(params)
-    local hitPos = params.hitPos
-    local dir = params.dir
-    local maxDist = params.maxDist
-    local firstMatType = params.firstMatType
-
-    -- 从入口点偏移进入世界内部（与 ARC9 一致）
-    local currentPos = hitPos + dir * PENETRATION_EPSILON
-    local thickness = 0
-    local stepCount = 0
-    local maxSteps = math.ceil(maxDist / WORLD_STEP_SIZE) + WORLD_STEP_ITER_SAFETY_MARGIN
-
-    local lastTrace = nil
-
-    while thickness < maxDist and stepCount < maxSteps do
-        stepCount = stepCount + 1
-        local nextPos = currentPos + dir * STEP_LENGTH
-
-        local trace = util.TraceLine({
-            start = currentPos,
-            endpos = nextPos,
-            mask = MASK_SHOT,
-            collisiongroup = COLLISION_GROUP_DEBRIS -- 只与世界交互
-        })
-
-        -- 检测到天空盒：墙体无限厚
-        if trace.HitSky then
-            return math.huge, hitPos, firstMatType or 0
-        end
-
-        -- 检查是否仍处于世界内部（使用 ARC9 判定）
-        if IsPenetrating(trace, trace.Entity) then
-            -- 仍在世界内，继续步进
-            thickness = thickness + STEP_LENGTH
-            currentPos = nextPos
-            lastTrace = trace
-        else
-            -- 已穿出世界，退出循环
-            -- 出口点使用最后一次成功步进的 HitPos（性能优化，不追求极度精确）
-            local exitPos = lastTrace and lastTrace.HitPos or hitPos
-            local matType = (lastTrace and lastTrace.MatType) or firstMatType or 0
-            return thickness, exitPos, matType
-        end
-    end
-
-    -- 超过最大距离仍未穿出，返回当前厚度和终点
-    return thickness, currentPos, firstMatType or 0
-end
-
---- 测量实体墙的厚度（模拟 ARC9 无限穿透力子弹）
---- @param params table 参数表，包含以下字段：
----   @field hitPos Vector 入口点
----   @field dir Vector 方向
----   @field entity Entity 实体对象
----   @field maxDist number 第二次射线的最大距离
----   @field firstMatType number? 后备材质
---- @return number thickness 厚度
---- @return Vector exitPos 出口点
---- @return number matType 材质类型
-local function MeasureEntityThickness(params)
-    local hitPos = params.hitPos
-    local dir = params.dir
-    local entity = params.entity
-    local maxDist = params.maxDist
-    local firstMatType = params.firstMatType
-
-    -- 从入口点偏移进入实体内部
-    local currentPos = hitPos + dir * PENETRATION_EPSILON
-    local thickness = 0
-    local stepCount = 0
-    local maxSteps = math.ceil(maxDist / WORLD_STEP_SIZE) + WORLD_STEP_ITER_SAFETY_MARGIN
-
-    local lastTrace = nil
-
-    while thickness < maxDist and stepCount < maxSteps do
-        stepCount = stepCount + 1
-        local nextPos = currentPos + dir * STEP_LENGTH
-
-        local trace = util.TraceLine({
-            start = currentPos,
-            endpos = nextPos,
-            mask = MASK_SHOT,
-            filter = {entity},
-            whitelist = true
-        })
-
-        -- 实体测量中也可能遇到天空盒（例如实体位于世界边缘）
-        if trace.HitSky then
-            return math.huge, hitPos, firstMatType or 0
-        end
-
-        -- 检查是否仍在该实体内部
-        if IsPenetrating(trace, entity) then
-            thickness = thickness + STEP_LENGTH
-            currentPos = nextPos
-            lastTrace = trace
-        else
-            local exitPos = lastTrace and lastTrace.HitPos or hitPos
-            local matType = (lastTrace and lastTrace.MatType) or firstMatType or 0
-            return thickness, exitPos, matType
-        end
-    end
-
-    return thickness, currentPos, firstMatType or 0
-end
-
--- ==================== 主函数 ====================
---- 获取从攻击者到受害者方向上的所有墙体信息，沿途依次检测并收集。
---- 世界始终被视为墙体；其他实体根据 wallClassNames 参数分类为墙体或非墙体。
----
---- @param attacker {Entity} 攻击者实体，用于过滤，避免自身被计入墙体
---- @param victim {Entity} 目标实体，用于过滤，避免自身被计入墙体
---- @param attackerPos {Vector} 攻击起始位置
---- @param victimPos {Vector} 目标位置
---- @param wallClassNames {table?} 被视为墙体的实体类名列表；若为 nil，则所有实体均不作为墙体（世界仍作为墙体）
----
---- @return { table } walls: 墙体信息列表，每项包含：
----   @field className {string} 类名（世界墙为 "world"）
----   @field thickness {number} 沿方向的厚度（浮点数）
----   @field hitPos {Vector} 入射点（表面击中点）
----   @field exitPos {Vector} 出射点（穿出表面点）
----   @field matType {number} ARC9材质枚举，若无则为0
----   @field incidentAngle {number} 入射角，单位度，0=掠射，90=垂直
----
---- @return { table } others: 非墙体实体信息列表，每项结构与 walls 完全相同：
----   @field className {string} 实体的类名
----   @field thickness {number} 沿方向的厚度（浮点数）
----   @field hitPos {Vector} 入射点
----   @field exitPos {Vector} 出射点
----   @field matType {number} ARC9材质枚举，若无则为0
----   @field incidentAngle {number} 入射角，单位度，0=掠射，90=垂直
----
---- @note 两个返回值结构对偶，walls 记录被判定为墙的实体（包括世界），others 记录其余穿透的实体。
---- @note attacker 与 victim 均为实体，用于射线过滤，防止将自身或目标计入墙体。
-function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClassNames)
+--- 主函数：从攻击者到受害者方向依次收集所有穿过的墙体信息。
+--- 所有命中实体（包括世界）均视为墙体，返回信息列表。
+--- @param attacker Entity
+--- @param victim Entity
+--- @param attackerPos Vector
+--- @param victimPos Vector
+--- @return table
+function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos)
     local walls = {}
-    local others = {}
     local currentPos = attackerPos
     local dir = (victimPos - attackerPos):GetNormalized()
     local remainingDist = attackerPos:Distance(victimPos)
@@ -205,12 +183,7 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
             filter = filterEnts
         })
 
-        if not trace.Hit then
-            break
-        end
-
-        -- 首次击中天空盒：无墙体
-        if trace.HitSky then
+        if not trace.Hit or trace.HitSky then
             break
         end
 
@@ -219,67 +192,41 @@ function GetWallInfoAlongLine(attacker, victim, attackerPos, victimPos, wallClas
         local className = isWorld and "world" or hitEnt:GetClass()
         local incidentAngle = GetIncidentAngle(trace.HitNormal, dir)
 
-        -- 构造统一的测量参数表
         local measureParams = {
-            hitPos = trace.HitPos,
+            startPos = trace.HitPos + dir * PENETRATION_EPSILON,
             dir = dir,
+            entity = hitEnt,
             maxDist = remainingDist,
             firstMatType = trace.MatType
         }
-        if not isWorld then
-            measureParams.entity = hitEnt
-        end
 
         local thickness, exitPos, matType
         if isWorld then
-            thickness, exitPos, matType = MeasureWorldThickness(measureParams)
+            thickness, exitPos, matType = MeasureThickness(measureParams)
         else
-            thickness, exitPos, matType = MeasureEntityThickness(measureParams)
+            thickness, exitPos, matType = MeasureEntityThicknessFast(measureParams)
         end
-
         matType = matType or trace.MatType or 0
 
-        local info = {
+        table.insert(walls, {
             className = className,
             thickness = thickness,
-            hitPos = trace.HitPos, -- 记录入射点
-            exitPos = exitPos, -- 记录出射点
+            hitPos = trace.HitPos,
+            exitPos = exitPos,
             matType = matType,
             incidentAngle = incidentAngle
-        }
+        })
 
-        -- 判断是否为墙体
-        if isWorld then
-            table.insert(walls, info)
-        else
-            local isWall = false
-            if wallClassNames then
-                for _, cls in ipairs(wallClassNames) do
-                    if cls == className then
-                        isWall = true
-                        break
-                    end
-                end
-            end
-            if isWall then
-                table.insert(walls, info)
-            else
-                table.insert(others, info)
-            end
-        end
-
-        -- 如果厚度为无穷大，则后续无法穿透，终止循环
         if thickness == math.huge then
             break
         end
 
         currentPos = exitPos + dir * PENETRATION_EPSILON
         remainingDist = victimPos:Distance(currentPos)
-
         if remainingDist <= PENETRATION_EPSILON then
             break
         end
     end
 
-    return walls, others
+    return walls
 end
