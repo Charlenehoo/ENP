@@ -1,31 +1,9 @@
 -- lua\modules\util.lua
 ENP = ENP or {}
-ENP.Util = ENP.Util or {} -- 避免覆盖已有字段
+ENP.Util = ENP.Util or {}
 
 local EPS = 1e-8
 local ZERO_VECTOR = Vector(0, 0, 0)
-
---- 计算直线与平面的交点
---- 直线由起点 startPoint 指向终点 endPoint 定义（方向为 endPoint - startPoint，必须非零），
---- 平面由一点 planePoint 和单位法向量 planeNormal 定义（必须为单位向量）。
---- 若无唯一交点（平行或直线在平面上）返回 nil。
---- @param startPoint Vector 直线起点
---- @param endPoint Vector 直线终点（确定方向，不能与起点重合）
---- @param planePoint Vector 平面上一点
---- @param planeNormal Vector 平面单位法向量（必须归一化）
---- @return Vector|nil 交点坐标（无限直线上的点），若无唯一交点则返回 nil
-function ENP.Util.ComputeLinePlaneIntersection(startPoint, endPoint, planePoint, planeNormal)
-    local lineVec = endPoint - startPoint
-    -- 注意：调用者必须保证 lineVec 非零，planeNormal 为单位向量
-
-    local denom = lineVec:Dot(planeNormal)
-    if math.abs(denom) < EPS then
-        return nil -- 平行或直线在平面内
-    end
-
-    local t = -((startPoint - planePoint):Dot(planeNormal)) / denom
-    return startPoint + lineVec * t
-end
 
 --- 计算直线与平面的交点
 --- 直线由起点 startPoint 指向终点 endPoint 定义（方向为 endPoint - startPoint，必须非零），
@@ -49,6 +27,22 @@ function ENP.Util.ComputeLinePlaneIntersection(startPoint, endPoint, planePoint,
     return startPoint + lineVec * t
 end
 
+--- 计算过给定点且垂直于指定直线的平面
+--- 直线由起点 axisStart 指向终点 axisEnd 定义（方向为 axisEnd - axisStart，必须非零），
+--- offset 表示从起点沿该方向移动的距离（正值为向终点方向）。
+--- 返回平面上的点及单位法向量（指向终点方向，该方向已归一化）。
+--- @param axisStart Vector 主轴起点
+--- @param axisEnd Vector 主轴终点（确定方向）
+--- @param offset number 从起点沿主轴方向的距离（可为负，正值为向终点方向）
+--- @return Vector planePoint 平面上的点
+--- @return Vector unitNormal 单位法向量（指向终点）
+function ENP.Util.ComputePlanePerpendicularToLine(axisStart, axisEnd, offset)
+    local lineVec = axisEnd - axisStart
+    -- 调用者必须保证 lineVec 非零
+    local unitDir = lineVec:GetNormalized()
+    return axisStart + unitDir * offset, unitDir
+end
+
 --- 计算直线与垂直平面的交点
 --- 构造一个垂直于主轴 (axisStart→axisEnd) 且过偏移点 (axisStart + direction * offset) 的平面，
 --- 然后求该平面与直线 (rayStart→axisEnd) 的交点。
@@ -60,7 +54,6 @@ end
 --- @return Vector|nil 交点坐标，若无唯一交点则返回 nil
 function ENP.Util.ComputeLinePerpendicularPlaneIntersection(rayStart, axisStart, axisEnd, offset)
     local planePoint, unitNormal = ENP.Util.ComputePlanePerpendicularToLine(axisStart, axisEnd, offset)
-    -- ComputePlanePerpendicularToLine 返回的 unitNormal 已是单位向量
     return ENP.Util.ComputeLinePlaneIntersection(rayStart, axisEnd, planePoint, unitNormal)
 end
 
