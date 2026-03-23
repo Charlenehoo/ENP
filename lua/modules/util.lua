@@ -46,7 +46,7 @@ end
 --- 计算直线与垂直平面的交点
 --- 构造一个垂直于主轴 (axisStart→axisEnd) 且过偏移点 (axisStart + direction * offset) 的平面，
 --- 然后求该平面与直线 (rayStart→axisEnd) 的交点。
---- 主轴方向必须非零，射线方向 (axisEnd - rayStart) 必须非零。
+--- 主轴方向必须非零，射线方向必须非零。
 --- @param rayStart Vector 另一条直线的起点（与 axisEnd 确定直线）
 --- @param axisStart Vector 主轴起点
 --- @param axisEnd Vector 主轴终点（同时是另一条直线的终点）
