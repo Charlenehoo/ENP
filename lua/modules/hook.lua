@@ -6,7 +6,7 @@ ENP.managedAttackers = ENP.managedAttackers or {}
 ENP.attackerTests = ENP.attackerTests or {}
 
 local SINGLE_PLAYER_ALERT =
-    "[ENP] 此模组仅限单机模式游玩，检测到非主机玩家，部分功能可能异常。"
+"[ENP] 此模组仅限单机模式游玩，检测到非主机玩家，部分功能可能异常。"
 local PLAYER = Entity(1)
 
 local isPlayerInit = false
@@ -51,8 +51,4 @@ hook_Add("PlayerSpawn", "ENP_PlayerSpawn", function(player, transition)
         return
     end
     OnPlayerSpawn(player, transition)
-end)
-
-hook_Add("PlayerTick", "ENP_PlayerTick", function(player, mv)
-
 end)

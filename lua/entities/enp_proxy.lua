@@ -1,8 +1,4 @@
 -- .\lua\entities\enp_proxy.lua
-ENP = ENP or {}
-ENP.CONSTANTS = ENP.CONSTANTS or {}
-
-local PROXY_CLASS = "enp_proxy"
 local PROXY_MODEL = "models/editor/cube_small.mdl"
 local PROXY_SCALE = 0.04
 
@@ -16,5 +12,3 @@ function ENT:Initialize() -- https://wiki.facepunch.com/gmod/ENTITY:Initialize
     -- self:SetNoDraw(true)
     self:SetCollisionGroup(COLLISION_GROUP_NONE)
 end
-
-ENP.CONSTANTS.PROXY_CLASS = PROXY_CLASS
