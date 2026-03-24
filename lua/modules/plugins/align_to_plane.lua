@@ -26,4 +26,4 @@ local function alignProxyToPlane(mv, player, attacker, proxy, lastPos, lastAngle
     return intersection
 end
 
-ENP.RegisterProxyUpdateHandler(alignProxyToPlane, ENP.CONSTANTS.PRIORITY_FIRST)
+-- ENP.RegisterProxyUpdateHandler(alignProxyToPlane, ENP.CONSTANTS.PRIORITY_FIRST)
