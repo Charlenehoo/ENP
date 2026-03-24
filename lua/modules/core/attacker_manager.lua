@@ -5,96 +5,106 @@ local DEBUG = true
 local AttackerManager = {}
 AttackerManager.__index = AttackerManager
 
--- 构造函数
 function AttackerManager:New(player)
     local obj = {
         player = player,
-        ragdoll = nil,
-        filters = {},
-        attackers = {},
-        pending = {}
+        attackers = {}, -- attacker -> list of proxy entities
+        filters = {} -- list of filter functions
     }
     setmetatable(obj, self)
     if DEBUG then
-        print(string.format("[ENP] AttackerManager:New created for player %s (index %d)",
-            player:Nick(), player:EntIndex()))
+        print(string.format("[ENP] AttackerManager:New created for player %s (index %d)", player:Nick(),
+            player:EntIndex()))
     end
     return obj
 end
 
--- 注册筛选器（略，与之前相同）
 function AttackerManager:RegisterFilter(filterFunc)
     table.insert(self.filters, filterFunc)
 end
 
 function AttackerManager:CreateProxy(attacker, boneIndex)
     local proxy = ents.Create(PROXY_CLASS)
-    if not IsValid(proxy) then return end
+    if not IsValid(proxy) then
+        return nil
+    end
     proxy.enpBoneIndex = boneIndex
     proxy:Spawn()
     return proxy
 end
 
 function AttackerManager:_ProcessAttacker(attacker)
-    self.attackers[attacker] = {}
-    for _, boneIndex in ipairs(self.player.enpBoneCache) do
-        local proxy = self:CreateProxy(attacker, boneIndex)
-        table.insert(self.attackers[attacker], proxy)
-    end
-end
-
-function AttackerManager:_ProcessEntity(entity)
-    for _, filter in ipairs(self.filters) do
-        if filter(entity) then
-            if not self.attackers[entity] then
-                self:_ProcessAttacker(entity)
-            end
-            break
-        end
-    end
-end
-
-function AttackerManager:OnEntityCreated(entity)
-    if entity:GetClass() == PROXY_CLASS then return end
-    if not self.player.enpBoneCache then
-        self.pending[entity] = true
-        return
-    end
-    self:_ProcessEntity(entity)
-end
-
-function AttackerManager:OnEntityRemoved(entity)
-    if self.attackers[entity] then
-        self.attackers[entity] = nil
-    end
-    if self.pending[entity] then
-        self.pending[entity] = nil
-    end
-end
-
-function AttackerManager:OnPlayerModelReady()
-    for entity, _ in pairs(self.pending) do
-        self:_ProcessEntity(entity)
-    end
-    self.pending = {}
-    for attacker, proxies in pairs(self.attackers) do
-        for _, proxy in ipairs(proxies) do
+    if self.attackers[attacker] then
+        for _, proxy in ipairs(self.attackers[attacker]) do
             if IsValid(proxy) then
                 proxy:Remove()
             end
         end
-        self.attackers[attacker] = {}
-        for _, boneIndex in ipairs(self.player.enpBoneCache) do
-            local proxy = self:CreateProxy(attacker, boneIndex)
+    end
+
+    self.attackers[attacker] = {}
+    for _, boneIndex in ipairs(self.player.enpBoneCache) do
+        local proxy = self:CreateProxy(attacker, boneIndex)
+        if proxy then
             table.insert(self.attackers[attacker], proxy)
         end
+    end
+end
+
+function AttackerManager:_ShouldProcess(entity)
+    if entity:GetClass() == PROXY_CLASS then
+        return false
+    end
+    for _, filter in ipairs(self.filters) do
+        if filter(entity) then
+            return true
+        end
+    end
+    return false
+end
+
+function AttackerManager:OnPlayerBoneCacheInitialized()
+    if DEBUG then
+        print(string.format("[ENP] AttackerManager: Bone cache ready, scanning all entities for player %s",
+            self.player:Nick()))
+    end
+
+    for _, ent in pairs(ents.GetAll()) do
+        if self:_ShouldProcess(ent) then
+            self:_ProcessAttacker(ent)
+        end
+    end
+end
+
+function AttackerManager:OnEntityRemoved(entity)
+    if entity:GetClass() == PROXY_CLASS then
+        return
+    end
+
+    if self.attackers[entity] then
+        for _, proxy in ipairs(self.attackers[entity]) do
+            if IsValid(proxy) then
+                proxy:Remove()
+            end
+        end
+        self.attackers[entity] = nil
+    end
+end
+
+function AttackerManager:OnEntityCreated(entity)
+    if not self.player.enpBoneCache then
+        return
+    end
+
+    if self:_ShouldProcess(entity) then
+        self:_ProcessAttacker(entity)
     end
 end
 
 -- =======================================================
 -- 模块初始化：注册钩子，动态确定本地玩家
 -- =======================================================
-local localPlayer = nil -- 将在第一个 PlayerInitialSpawn 中设置
+local localPlayer = nil
 
 hook.Add("OnEntityCreated", "ENP_AttackerManager_OnEntityCreated", function(entity)
     if localPlayer and localPlayer.enpAttackerManager then
@@ -108,20 +118,27 @@ hook.Add("EntityRemoved", "ENP_AttackerManager_EntityRemoved", function(entity)
     end
 end)
 
-hook.Add("ENP_PlayerBoneCacheInitialized", "ENP_AttackerManager_PlayerBoneCacheInitialized", function(player)
+hook.Add("ENP_PlayerBoneCacheInitialized", "ENP_AttackerManager_BoneCacheInitialized", function(player)
     if localPlayer and player == localPlayer and localPlayer.enpAttackerManager then
-        localPlayer.enpAttackerManager:OnPlayerModelReady()
+        localPlayer.enpAttackerManager:OnPlayerBoneCacheInitialized()
     end
 end)
 
-hook.Add("PlayerInitialSpawn", "ENP_AttackerManager_PlayerInitialSpawn", function(player)
+local example_filter = function(ent)
+    return IsValid(ent) and ent:IsNPC()
+end
+
+hook.Add("PlayerInitialSpawn", "ENP_AttackerManager_PlayerSpawn", function(player)
     if not localPlayer then
         localPlayer = player
         if not localPlayer.enpAttackerManager then
             localPlayer.enpAttackerManager = AttackerManager:New(localPlayer)
-            localPlayer.enpAttackerManager:RegisterFilter(function(ent)
-                return IsValid(ent) and ent:IsNPC()
-            end)
+
+            localPlayer.enpAttackerManager:RegisterFilter(example_filter)
+
+            if localPlayer.enpBoneCache then
+                localPlayer.enpAttackerManager:OnPlayerBoneCacheInitialized()
+            end
         end
     end
 end)

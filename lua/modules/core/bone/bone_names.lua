@@ -1,6 +1,4 @@
 -- lua\modules\core\bone\bone_names.lua
-ENP = ENP or {}
-ENP.CONSTANTS = ENP.CONSTANTS or {}
 ENP.CONSTANTS.BONE_NAMES = {"ValveBiped.Bip01_Pelvis", "ValveBiped.Bip01_Spine", "ValveBiped.Bip01_Spine1",
                             "ValveBiped.Bip01_Spine2", "ValveBiped.Bip01_Spine4", "ValveBiped.Bip01_L_Clavicle",
                             "ValveBiped.Bip01_L_UpperArm", "ValveBiped.Bip01_L_Forearm", "ValveBiped.Bip01_L_Hand",
