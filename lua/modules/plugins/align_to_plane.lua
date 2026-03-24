@@ -1,5 +1,5 @@
 -- lua/modules/plugins/align_to_plane.lua
-local OFFSET = 128 -- 平面沿主轴偏移的距离（从玩家眼睛位置向攻击者眼睛方向）
+local OFFSET = 32 -- 平面沿主轴偏移的距离（从玩家眼睛位置向攻击者眼睛方向）
 
 --- 代理位置对齐处理函数
 --- 将每个代理的位置移动到垂直于“玩家->攻击者”主轴的平面上，平面距离玩家眼睛位置 OFFSET 个单位
@@ -11,7 +11,7 @@ local OFFSET = 128 -- 平面沿主轴偏移的距离（从玩家眼睛位置向�
 --- @param lastAngle Angle 代理当前角度（来自骨骼角度）
 --- @return Vector newPos 处理后的新位置（若交点存在则更新，否则不变）
 --- @return Angle newAngle 处理后的新角度（本 handler 不修改角度）
-local function alignProxyToPlane(mv, player, attacker, proxy, lastPos, lastAngle)
+local function alignProxyToPlane(t, player, attacker, proxy, lastPos, lastAngle)
     local axisStart = player:EyePos()
     local axisEnd = attacker:EyePos()
 
@@ -26,4 +26,4 @@ local function alignProxyToPlane(mv, player, attacker, proxy, lastPos, lastAngle
     return intersection
 end
 
--- ENP.RegisterProxyUpdateHandler(alignProxyToPlane, ENP.CONSTANTS.PRIORITY_FIRST)
+ENP.RegisterProxyUpdateHandler(alignProxyToPlane, 0)

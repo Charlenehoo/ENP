@@ -30,10 +30,11 @@ function AttackerManager:CreateProxy(attacker, boneIndex)
         return nil
     end
     local disposition, dispositionPriority = attacker:Disposition(player)
-    proxy.enpOriginalDisposition = disposition
+    proxy.enpAttacker = attacker
+    -- proxy.enpOriginalDisposition = disposition
     proxy.enpOriginalDispositionPriority = dispositionPriority
-    attacker:AddRelationship(string.format("%s %s %s", PROXY_CLASS, D_NU, dispositionPriority - 1))
-    attacker:AddEntityRelationship(player, D_NU, dispositionPriority - 1)
+    attacker:AddRelationship(string.format("%s %s %s", PROXY_CLASS, D_NU, dispositionPriority))
+    attacker:AddEntityRelationship(player, D_NU, dispositionPriority)
     proxy.enpBoneIndex = boneIndex
     proxy:Spawn()
     return proxy
