@@ -31,7 +31,15 @@ hook.Add("PlayerTick", "ENP_PlayerTick", function(player, mv)
     for attacker, proxies in pairs(attackerManager.attackers) do
         for _, proxy in ipairs(proxies) do
             local boneIndex = proxy.enpBoneIndex
-            local target = player:Alive() and player or ENP.GetRagdollForPlayer(player)
+
+            local target
+            local ragdoll = ENP.GetRagdoll(player)
+            if IsValid(ragdoll) then
+                target = ragdoll
+            else
+                target = player
+            end
+
             local lastPos, lastAngle = target:GetBonePosition(boneIndex)
 
             for _, item in ipairs(proxyUpdateHandlers) do
