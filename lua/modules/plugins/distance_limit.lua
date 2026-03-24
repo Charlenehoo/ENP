@@ -20,7 +20,6 @@ local function limitDistanceToAttacker(mv, player, attacker, proxy, lastPos, las
         local direction = toProxy:GetNormalized()
         return eyePos + direction * MAX_DIST
     end
-    return
 end
 
 ENP.RegisterProxyUpdateHandler(limitDistanceToAttacker, ENP.CONSTANTS.PRIORITY_LAST)

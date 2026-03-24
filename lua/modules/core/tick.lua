@@ -33,11 +33,10 @@ hook.Add("PlayerTick", "ENP_PlayerTick", function(player, mv)
             local boneIndex = proxy.enpBoneIndex
 
             local target
-            local ragdoll = ENP.GetRagdoll(player)
-            if IsValid(ragdoll) then
-                target = ragdoll
-            else
+            if player:Alive() then
                 target = player
+            else
+                target = player:GetRagdollEntity()
             end
 
             local lastPos, lastAngle = target:GetBonePosition(boneIndex)
