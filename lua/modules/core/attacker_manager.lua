@@ -9,7 +9,7 @@ function AttackerManager:New(player)
     local obj = {
         player = player,
         attackers = {}, -- attacker -> list of proxy entities
-        filters = {} -- list of filter functions
+        filters = {}    -- list of filter functions
     }
     setmetatable(obj, self)
     if DEBUG then
@@ -24,10 +24,16 @@ function AttackerManager:RegisterFilter(filterFunc)
 end
 
 function AttackerManager:CreateProxy(attacker, boneIndex)
+    local player = self.player
     local proxy = ents.Create(PROXY_CLASS)
     if not IsValid(proxy) then
         return nil
     end
+    local disposition, dispositionPriority = attacker:Disposition(player)
+    proxy.enpOriginalDisposition = disposition
+    proxy.enpOriginalDispositionPriority = dispositionPriority
+    attacker:AddRelationship(string.format("%s %s %s", PROXY_CLASS, D_NU, dispositionPriority - 1))
+    attacker:AddEntityRelationship(player, D_NU, dispositionPriority - 1)
     proxy.enpBoneIndex = boneIndex
     proxy:Spawn()
     return proxy
