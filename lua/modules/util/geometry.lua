@@ -1,8 +1,7 @@
--- lua\modules\util.lua
-ENP = ENP or {}
+-- lua\modules\util\geometry.lua
 ENP.Util = ENP.Util or {}
 
-local EPS = 1e-8
+local EPS = ENP.CONSTANTS.EPS
 local ZERO_VECTOR = Vector(0, 0, 0)
 
 --- 计算直线与平面的交点
