@@ -27,8 +27,7 @@ local function InitializeBoneCache(player)
         table.insert(player.enpBoneCache, boneIndex)
     end
 
-    print(string.format("[ENP] Model changed for player %s, reinitialized cache with %d bones.",
-        player:Nick(), #player.enpBoneCache))
+    print(string.format("[ENP] Model changed for player %s (model: %s), reinitialized cache with %d bones.", player:Nick(), model, #player.enpBoneCache))
 
     if #player.enpBoneCache > 0 then
         player.enpLastModel = model
