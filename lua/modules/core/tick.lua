@@ -36,7 +36,7 @@ hook.Add("ENP_PlayerBoneCacheInitialized", "ENP_AttackerManager_BoneCacheInitial
             return
         end
 
-        local tickCount = engine.TickCount
+        local tickCount = engine.TickCount()
 
         for attacker, proxies in pairs(attackerManager.attackers) do
             for _, proxy in ipairs(proxies) do
